@@ -69,6 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $confirm = $_POST['confirm_password'] ?? '';
                 $roleName = strtolower(trim($_POST['role_name'] ?? ''));
                 $status = ($_POST['status'] ?? 'active') === 'inactive' ? 'inactive' : 'active';
+                $departmentId = (int)($_POST['department_id'] ?? 0);
 
                 if (!in_array($roleName, ['admin', 'hod', 'lecturer'], true)) {
                     throw new RuntimeException('Please select a valid role.');
@@ -97,8 +98,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $pdo->beginTransaction();
 
-                $insert = $pdo->prepare("INSERT INTO users (full_name, email, password, role_id, status, created_at) VALUES (?, ?, ?, ?, ?, NOW())");
-                $insert->execute([$fullName, $email, password_hash($password, PASSWORD_DEFAULT), $roleMap[$roleName], $status]);
+                $insert = $pdo->prepare("INSERT INTO users (full_name, email, password, role_id, department_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())");
+                if ($roleName === 'hod') {
+                    if ($departmentId <= 0) throw new RuntimeException('Please select the HOD department.');
+                    $deptCheck = $pdo->prepare("SELECT department_id FROM departments WHERE department_id = ? LIMIT 1");
+                    $deptCheck->execute([$departmentId]);
+                    if (!$deptCheck->fetchColumn()) throw new RuntimeException('Selected HOD department does not exist.');
+                } else {
+                    $departmentId = null;
+                }
+                $insert->execute([$fullName, $email, password_hash($password, PASSWORD_DEFAULT), $roleMap[$roleName], $departmentId, $status]);
                 $userId = (int)$pdo->lastInsertId();
 
                 // A Lecturer login is also represented in the lecturers table.
@@ -135,6 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $roleName = strtolower(trim($_POST['role_name'] ?? ''));
                 $status = ($_POST['status'] ?? 'active') === 'inactive' ? 'inactive' : 'active';
                 $newPassword = $_POST['password'] ?? '';
+                $departmentId = (int)($_POST['department_id'] ?? 0);
 
                 if ($userId <= 0) throw new RuntimeException('Invalid user selected.');
                 if ($fullName === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new RuntimeException('Please provide a valid name and email.');
@@ -147,11 +157,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->beginTransaction();
                 if ($newPassword !== '') {
                     if (strlen($newPassword) < 8) throw new RuntimeException('New password must contain at least 8 characters.');
-                    $stmt = $pdo->prepare("UPDATE users SET full_name=?, email=?, password=?, role_id=?, status=? WHERE user_id=?");
-                    $stmt->execute([$fullName, $email, password_hash($newPassword, PASSWORD_DEFAULT), $roleMap[$roleName], $status, $userId]);
+                    $stmt = $pdo->prepare("UPDATE users SET full_name=?, email=?, password=?, role_id=?, department_id=?, status=? WHERE user_id=?");
+                    if ($roleName === 'hod') {
+                        if ($departmentId <= 0) throw new RuntimeException('Please select the HOD department.');
+                    } else { $departmentId = null; }
+                    $stmt->execute([$fullName, $email, password_hash($newPassword, PASSWORD_DEFAULT), $roleMap[$roleName], $departmentId, $status, $userId]);
                 } else {
-                    $stmt = $pdo->prepare("UPDATE users SET full_name=?, email=?, role_id=?, status=? WHERE user_id=?");
-                    $stmt->execute([$fullName, $email, $roleMap[$roleName], $status, $userId]);
+                    $stmt = $pdo->prepare("UPDATE users SET full_name=?, email=?, role_id=?, department_id=?, status=? WHERE user_id=?");
+                    if ($roleName === 'hod') {
+                        if ($departmentId <= 0) throw new RuntimeException('Please select the HOD department.');
+                    } else { $departmentId = null; }
+                    $stmt->execute([$fullName, $email, $roleMap[$roleName], $departmentId, $status, $userId]);
                 }
 
                 // Keep an existing Lecturer profile synchronized with account details.
@@ -241,7 +257,7 @@ $sql = "SELECT u.user_id, u.full_name, u.email, u.status, u.created_at, r.role_n
         FROM users u
         LEFT JOIN roles r ON r.role_id=u.role_id
         LEFT JOIN lecturers l ON LOWER(l.email)=LOWER(u.email)
-        LEFT JOIN departments d ON d.department_id=l.department_id
+        LEFT JOIN departments d ON d.department_id=COALESCE(u.department_id, l.department_id)
         WHERE 1=1";
 $params = [];
 
@@ -339,7 +355,7 @@ a{text-decoration:none;color:inherit}.layout{display:flex;min-height:100vh}.side
                 <div class="field"><label>Role</label><select class="select" name="role_name" id="editRole" onchange="toggleExtra(this.value,'editExtra')" required><?php foreach(['admin'=>'Admin','hod'=>'HOD','lecturer'=>'Lecturer'] as $key=>$label): ?><option value="<?php echo $key; ?>" <?php echo strtolower($editUser['role_name']??'')===$key?'selected':''; ?>><?php echo $label; ?></option><?php endforeach; ?></select></div>
                 <div class="field"><label>Status</label><select class="select" name="status"><option value="active" <?php echo strtolower($editUser['status'])==='active'?'selected':''; ?>>Active</option><option value="inactive" <?php echo strtolower($editUser['status'])==='inactive'?'selected':''; ?>>Inactive</option></select></div>
                 <div class="field full"><label>New Password <span style="font-weight:400;color:#8a958f">(leave blank to keep current password)</span></label><input class="input" type="password" name="password" minlength="8"></div>
-                <div id="editExtra" class="full role-extra <?php echo strtolower($editUser['role_name']??'')==='lecturer'?'show':''; ?>">
+                <div id="editExtra" class="full role-extra <?php echo in_array(strtolower($editUser['role_name']??''),['hod','lecturer'],true)?'show':''; ?>">
                     <div class="form-grid">
                         <div class="field"><label>Staff Number</label><input class="input" name="staff_no" value="<?php echo e($editUser['staff_no'] ?? ''); ?>"></div>
                         <div class="field"><label>Phone</label><input class="input" name="phone" value="<?php echo e($editUser['phone'] ?? ''); ?>"></div>
@@ -406,11 +422,11 @@ a{text-decoration:none;color:inherit}.layout{display:flex;min-height:100vh}.side
             <div class="field"><label>Confirm Password</label><input class="input" type="password" name="confirm_password" minlength="8" required></div>
             <div id="createExtra" class="full role-extra">
                 <div class="form-grid">
-                    <div class="field"><label>Staff Number <span style="font-weight:400;color:#8a958f">(Lecturer only)</span></label><input class="input" name="staff_no" placeholder="e.g. UB/LECT/001"></div>
-                    <div class="field"><label>Phone <span style="font-weight:400;color:#8a958f">(Lecturer only)</span></label><input class="input" name="phone" placeholder="Phone number"></div>
-                    <div class="field full"><label>Department <span style="font-weight:400;color:#8a958f">(Lecturer only)</span></label><select class="select" name="department_id"><option value="">Select department</option><?php foreach($departments as $d): ?><option value="<?php echo (int)$d['department_id']; ?>"><?php echo e($d['department_name']); ?></option><?php endforeach; ?></select></div>
+                    <div id="createStaffField" class="field"><label>Staff Number <span style="font-weight:400;color:#8a958f">(Lecturer only)</span></label><input class="input" name="staff_no" placeholder="e.g. UB/LECT/001"></div>
+                    <div id="createPhoneField" class="field"><label>Phone <span style="font-weight:400;color:#8a958f">(Lecturer only)</span></label><input class="input" name="phone" placeholder="Phone number"></div>
+                    <div class="field full"><label>Department <span style="font-weight:400;color:#8a958f">(HOD / Lecturer)</span></label><select class="select" name="department_id"><option value="">Select department</option><?php foreach($departments as $d): ?><option value="<?php echo (int)$d['department_id']; ?>"><?php echo e($d['department_name']); ?></option><?php endforeach; ?></select></div>
                 </div>
-                <?php if (!$departments): ?><div class="help" style="color:#b52b2b">No departments are currently stored. Create a department first before creating a Lecturer.</div><?php endif; ?>
+                <?php if (!$departments): ?><div class="help" style="color:#b52b2b">No departments are currently stored. Create a department first before creating a HOD or Lecturer.</div><?php endif; ?>
             </div>
         </div>
         <div class="form-actions"><button type="button" class="btn btn-light" onclick="closeCreate()">Cancel</button><button class="btn btn-primary">Create User</button></div>
@@ -420,7 +436,7 @@ a{text-decoration:none;color:inherit}.layout{display:flex;min-height:100vh}.side
 <script>
 function openCreate(){document.getElementById('createModal').classList.add('show');}
 function closeCreate(){document.getElementById('createModal').classList.remove('show');}
-function toggleExtra(role,id){const el=document.getElementById(id); if(el) el.classList.toggle('show',role==='lecturer');}
+function toggleExtra(role,id){const el=document.getElementById(id); if(el) el.classList.toggle('show',role==='hod'||role==='lecturer'); const sf=document.getElementById('createStaffField'); const pf=document.getElementById('createPhoneField'); if(sf) sf.style.display=role==='lecturer'?'block':'none'; if(pf) pf.style.display=role==='lecturer'?'block':'none';}
 document.getElementById('createModal').addEventListener('click',function(e){if(e.target===this)closeCreate();});
 </script>
 </body>
