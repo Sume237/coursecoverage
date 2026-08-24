@@ -1,0 +1,23 @@
+CREATE TABLE `semesters` (
+    `semester_id` INT(11) NOT NULL AUTO_INCREMENT,
+    `semester_name` VARCHAR(50) NOT NULL,
+    `semester_code` VARCHAR(20) NOT NULL,
+    `session_id` INT(11) NOT NULL,
+    `start_date` DATE NOT NULL,
+    `end_date` DATE NOT NULL,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'Active',
+
+    PRIMARY KEY (`semester_id`),
+
+    UNIQUE KEY `unique_semester_code_session`
+    (`semester_code`, `session_id`),
+
+    CONSTRAINT `fk_semester_session`
+    FOREIGN KEY (`session_id`)
+    REFERENCES `academic_session` (`session_id`)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+
+) ENGINE=InnoDB
+DEFAULT CHARSET=utf8mb4
+COLLATE=utf8mb4_general_ci;
